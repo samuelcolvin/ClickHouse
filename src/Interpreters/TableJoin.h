@@ -204,7 +204,7 @@ public:
         : size_limits(limits)
         , default_max_bytes(0)
         , join_use_nulls(use_nulls)
-        , join_algorithm{JoinAlgorithm::DEFAULT}
+        , join_algorithm({JoinAlgorithm::DEFAULT})
     {
         clauses.emplace_back().key_names_right = key_names_right;
         table_join.kind = kind;
@@ -219,16 +219,15 @@ public:
 
     ActionsDAGPtr createJoinedBlockActions(ContextPtr context) const;
 
+    const std::vector<JoinAlgorithm> & getEnabledJoinAlgorithms() const { return join_algorithm; }
+
     bool isEnabledAlgorithm(JoinAlgorithm val) const
     {
         /// When join_algorithm = 'default' (not specified by user) we use hash or direct algorithm.
         /// It's behaviour that was initially supported by clickhouse.
-        bool is_enbaled_by_default = val == JoinAlgorithm::DEFAULT
-                                  || val == JoinAlgorithm::HASH
-                                  || val == JoinAlgorithm::DIRECT;
-        if (is_enbaled_by_default && (join_algorithm.empty() || join_algorithm.front() == JoinAlgorithm::DEFAULT))
+        bool is_default_enabled = std::find(join_algorithm.begin(), join_algorithm.end(), JoinAlgorithm::DEFAULT) != join_algorithm.end();
+        if (is_default_enabled && (val == JoinAlgorithm::DEFAULT || val == JoinAlgorithm::HASH || val == JoinAlgorithm::DIRECT))
             return true;
-
         return std::find(join_algorithm.begin(), join_algorithm.end(), val) != join_algorithm.end();
     }
 

@@ -940,75 +940,92 @@ JoinPtr SelectQueryExpressionAnalyzer::appendJoin(
 std::shared_ptr<DirectKeyValueJoin> tryKeyValueJoin(std::shared_ptr<TableJoin> analyzed_join, const Block & right_sample_block);
 
 
-static std::shared_ptr<IJoin> chooseJoinAlgorithm(
-    std::shared_ptr<TableJoin> analyzed_join, const ColumnsWithTypeAndName & left_sample_columns, std::unique_ptr<QueryPlan> & joined_plan, ContextPtr context)
+static std::shared_ptr<IJoin> tryCreateJoin(
+    JoinAlgorithm algorithm,
+    std::shared_ptr<TableJoin> analyzed_join,
+    const ColumnsWithTypeAndName & left_sample_columns,
+    const Block & right_sample_block,
+    std::unique_ptr<QueryPlan> & joined_plan,
+    ContextPtr context)
 {
-    const auto & settings = context->getSettings();
-
-    Block right_sample_block = joined_plan->getCurrentDataStream().header;
-
-    std::vector<String> tried_algorithms;
-
-    if (analyzed_join->isEnabledAlgorithm(JoinAlgorithm::DIRECT))
+    if (algorithm == JoinAlgorithm::DIRECT || algorithm == JoinAlgorithm::DEFAULT)
     {
-        tried_algorithms.push_back(toString(JoinAlgorithm::DIRECT));
+        LOG_DEBUG(&Poco::Logger::get("XXXX"), "{}:{} ", __FILE__, __LINE__);
+
         JoinPtr direct_join = tryKeyValueJoin(analyzed_join, right_sample_block);
         if (direct_join)
         {
+            LOG_DEBUG(&Poco::Logger::get("XXXX"), "{}:{} ", __FILE__, __LINE__);
             /// Do not need to execute plan for right part, it's ready.
             joined_plan.reset();
             return direct_join;
         }
     }
 
-    if (analyzed_join->isEnabledAlgorithm(JoinAlgorithm::PARTIAL_MERGE) ||
-        analyzed_join->isEnabledAlgorithm(JoinAlgorithm::PREFER_PARTIAL_MERGE))
+    if (algorithm == JoinAlgorithm::PARTIAL_MERGE ||
+        algorithm == JoinAlgorithm::PREFER_PARTIAL_MERGE)
     {
-        tried_algorithms.push_back(toString(JoinAlgorithm::PARTIAL_MERGE));
+        LOG_DEBUG(&Poco::Logger::get("XXXX"), "{}:{} ", __FILE__, __LINE__);
+
         if (MergeJoin::isSupported(analyzed_join))
             return std::make_shared<MergeJoin>(analyzed_join, right_sample_block);
     }
 
-    if (analyzed_join->isEnabledAlgorithm(JoinAlgorithm::HASH) ||
+    if (algorithm == JoinAlgorithm::HASH ||
         /// partial_merge is preferred, but can't be used for specified kind of join, fallback to hash
-        analyzed_join->isEnabledAlgorithm(JoinAlgorithm::PREFER_PARTIAL_MERGE) ||
-        analyzed_join->isEnabledAlgorithm(JoinAlgorithm::PARALLEL_HASH))
+        algorithm == JoinAlgorithm::PREFER_PARTIAL_MERGE ||
+        algorithm == JoinAlgorithm::PARALLEL_HASH ||
+        algorithm == JoinAlgorithm::DEFAULT)
     {
-        tried_algorithms.push_back(toString(JoinAlgorithm::HASH));
+        LOG_DEBUG(&Poco::Logger::get("XXXX"), "{}:{} ", __FILE__, __LINE__);
+
+        const auto & settings = context->getSettings();
+
         if (analyzed_join->allowParallelHashJoin())
             return std::make_shared<ConcurrentHashJoin>(context, analyzed_join, settings.max_threads, right_sample_block);
         return std::make_shared<HashJoin>(analyzed_join, right_sample_block);
     }
 
-    if (analyzed_join->isEnabledAlgorithm(JoinAlgorithm::FULL_SORTING_MERGE))
+    if (algorithm == JoinAlgorithm::FULL_SORTING_MERGE)
     {
-        tried_algorithms.push_back(toString(JoinAlgorithm::FULL_SORTING_MERGE));
         if (FullSortingMergeJoin::isSupported(analyzed_join))
             return std::make_shared<FullSortingMergeJoin>(analyzed_join, right_sample_block);
     }
 
-    if (analyzed_join->isEnabledAlgorithm(JoinAlgorithm::GRACE_HASH))
+    if (algorithm == JoinAlgorithm::GRACE_HASH)
     {
-        tried_algorithms.push_back(toString(JoinAlgorithm::GRACE_HASH));
-
         // Grace hash join requires that columns exist in left_sample_block.
         Block left_sample_block(left_sample_columns);
         if (sanitizeBlock(left_sample_block, false) && GraceHashJoin::isSupported(analyzed_join))
             return std::make_shared<GraceHashJoin>(context, analyzed_join, left_sample_block, right_sample_block, context->getTempDataOnDisk());
     }
 
-    if (analyzed_join->isEnabledAlgorithm(JoinAlgorithm::AUTO))
+    if (algorithm == JoinAlgorithm::AUTO)
     {
-        tried_algorithms.push_back(toString(JoinAlgorithm::AUTO));
-
         if (MergeJoin::isSupported(analyzed_join))
             return std::make_shared<JoinSwitcher>(analyzed_join, right_sample_block);
         return std::make_shared<HashJoin>(analyzed_join, right_sample_block);
     }
+    LOG_DEBUG(&Poco::Logger::get("XXXX"), "{}:{} ", __FILE__, __LINE__);
+
+    return nullptr;
+}
+
+static std::shared_ptr<IJoin> chooseJoinAlgorithm(
+    std::shared_ptr<TableJoin> analyzed_join, const ColumnsWithTypeAndName & left_sample_columns, std::unique_ptr<QueryPlan> & joined_plan, ContextPtr context)
+{
+    Block right_sample_block = joined_plan->getCurrentDataStream().header;
+    const auto & join_algorithms = analyzed_join->getEnabledJoinAlgorithms();
+    for (const auto alg : join_algorithms)
+    {
+        auto join = tryCreateJoin(alg, analyzed_join, left_sample_columns, right_sample_block, joined_plan, context);
+        LOG_DEBUG(&Poco::Logger::get("XXXX"), "{}:{} {}: {}", __FILE__, __LINE__, alg, join ? "true" : "false");
+        if (join)
+            return join;
+    }
 
     throw Exception(ErrorCodes::NOT_IMPLEMENTED,
-        "Can't execute {} join algorithm for this strictness/kind and right storage type",
-        fmt::join(tried_algorithms, " or "));
+        "Can't execute any of specified join algorithms for this strictness/kind and right storage type");
 }
 
 static std::unique_ptr<QueryPlan> buildJoinedPlan(
@@ -1066,9 +1083,6 @@ static std::unique_ptr<QueryPlan> buildJoinedPlan(
 
 std::shared_ptr<DirectKeyValueJoin> tryKeyValueJoin(std::shared_ptr<TableJoin> analyzed_join, const Block & right_sample_block)
 {
-    if (!analyzed_join->isEnabledAlgorithm(JoinAlgorithm::DIRECT))
-        return nullptr;
-
     auto storage = analyzed_join->getStorageKeyValue();
     if (!storage)
         return nullptr;
