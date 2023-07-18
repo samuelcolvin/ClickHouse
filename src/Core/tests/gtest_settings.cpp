@@ -91,16 +91,16 @@ GTEST_TEST(SettingMySQLDataTypesSupport, SetString)
     ASSERT_TRUE(setting.changed);
     ASSERT_TRUE(MultiEnum<MySQLDataTypesSupport>(setting).isSet(MySQLDataTypesSupport::DECIMAL));
     ASSERT_TRUE(MultiEnum<MySQLDataTypesSupport>(setting).isSet(MySQLDataTypesSupport::DATETIME64));
-    ASSERT_EQ("decimal,datetime64", setting.toString());
-    ASSERT_EQ(Field("decimal,datetime64"), setting);
+    ASSERT_EQ("datetime64,decimal", setting.toString());
+    ASSERT_EQ(Field("datetime64,decimal"), setting);
 
     // comma with spaces
     setting = " datetime64 ,    decimal ";
     ASSERT_TRUE(setting.changed);
     ASSERT_TRUE(MultiEnum<MySQLDataTypesSupport>(setting).isSet(MySQLDataTypesSupport::DECIMAL));
     ASSERT_TRUE(MultiEnum<MySQLDataTypesSupport>(setting).isSet(MySQLDataTypesSupport::DATETIME64));
-    ASSERT_EQ("decimal,datetime64", setting.toString());
-    ASSERT_EQ(Field("decimal,datetime64"), setting);
+    ASSERT_EQ("datetime64,decimal", setting.toString());
+    ASSERT_EQ(Field("datetime64,decimal"), setting);
 
     setting = String(",,,,,,,, ,decimal");
     ASSERT_TRUE(setting.changed);

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S ${HOME}/clickhouse-client --queries-file
+-- Tags: use-rocksdb
 
 -- DirectJoin still requires fixes for analyzer
 SET allow_experimental_analyzer = 0;
@@ -63,3 +63,37 @@ SELECT countIf(explain like '%FillRightFirst%GraceHashJoin%'), countIf(explain l
 SET join_algorithm = 'grace_hash, hash, auto';
 
 SELECT value = 'grace_hash,hash,auto' FROM system.settings WHERE name = 'join_algorithm';
+
+
+DROP DICTIONARY IF EXISTS dict;
+DROP TABLE IF EXISTS src;
+
+CREATE TABLE src (id UInt64, s String) ENGINE = MergeTree ORDER BY id
+AS SELECT number, toString(number) FROM numbers(1000000);
+
+CREATE DICTIONARY dict(
+  id UInt64,
+  s  String
+) PRIMARY KEY id
+SOURCE(CLICKHOUSE(TABLE 'src' DB currentDatabase()))
+LIFETIME (MIN 0 MAX 0)
+LAYOUT(HASHED());
+
+SET join_algorithm = 'default';
+
+SELECT countIf(explain like '%FilledJoin%DirectJoin%'), countIf(explain like '%FillRightFirst% HashJoin%') FROM (
+    EXPLAIN description = 1
+    SELECT s FROM (SELECT toUInt64(9911) id) t1 INNER JOIN dict t2 USING (id)
+);
+
+SET join_algorithm = 'direct,hash';
+SELECT countIf(explain like '%FilledJoin%DirectJoin%'), countIf(explain like '%FillRightFirst% HashJoin%') FROM (
+    EXPLAIN description = 1
+    SELECT s FROM (SELECT toUInt64(9911) id) t1 INNER JOIN dict t2 USING (id)
+);
+
+SET join_algorithm = 'hash,direct';
+SELECT countIf(explain like '%FilledJoin%DirectJoin%'), countIf(explain like '%FillRightFirst% HashJoin%') FROM (
+    EXPLAIN description = 1
+    SELECT s FROM (SELECT toUInt64(9911) id) t1 INNER JOIN dict t2 USING (id)
+);

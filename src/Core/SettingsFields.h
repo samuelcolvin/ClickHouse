@@ -507,6 +507,7 @@ private:
         static const String separators=", ";
 
         ValueType result;
+        std::unordered_set<EnumType> values_set;
 
         //to avoid allocating memory on substr()
         const std::string_view str_view{str};
@@ -518,7 +519,12 @@ private:
             if (value_end == std::string::npos)
                 value_end = str_view.size();
 
-            result.push_back(Traits::fromString(str_view.substr(value_start, value_end - value_start)));
+            auto value = Traits::fromString(str_view.substr(value_start, value_end - value_start));
+            /// Deduplicate values
+            auto [_, inserted] = values_set.emplace(value);
+            if (inserted)
+                result.push_back(value);
+
             value_start = str_view.find_first_not_of(separators, value_end);
         }
 
