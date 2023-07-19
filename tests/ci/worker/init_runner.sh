@@ -12,7 +12,8 @@ echo "Running init script"
 export DEBIAN_FRONTEND=noninteractive
 export RUNNER_HOME=/home/ubuntu/actions-runner
 
-export RUNNER_URL="https://github.com/ClickHouse"
+export RUNNER_ORG="ClickHouse"
+export RUNNER_URL="https://github.com/${RUNNER_ORG}"
 # Funny fact, but metadata service has fixed IP
 INSTANCE_ID=$(ec2metadata --instance-id)
 export INSTANCE_ID
@@ -255,6 +256,7 @@ while true; do
     if [ -z "$runner_pid" ]; then
         cd $RUNNER_HOME || terminate_and_exit
         detect_delayed_termination
+        LABELS_DELETED=''
         # If runner is not active, check that it needs to terminate itself
         echo "Checking if the instance suppose to terminate"
         no_terminating_metadata || terminate_on_event
@@ -281,7 +283,12 @@ while true; do
         if ! is_job_assigned; then
             RUNNER_AGE=$(( $(date +%s) - $(stat -c +%Y /proc/"$runner_pid" 2>/dev/null || date +%s) ))
             echo "The runner is launched $RUNNER_AGE seconds ago and still has hot received the job"
-            if (( 60 < RUNNER_AGE )); then
+            if [ -z "$LABELS_DELETED" ] && (( 60 < RUNNER_AGE && RUNNER_AGE <= 120 )); then
+                # delete the tags, attempt to prevent another job assigned
+                curl -L -X DELETE -H "Authorization: Bearer $(get_runner_token)" \
+                    "https://api.github.com/orgs/${RUNNER_ORG}/actions/runners/${INSTANCE_ID}/labels" \
+                    && LABELS_DELETED=true
+            elif (( 120 < RUNNER_AGE )); then
                 echo "Check if the instance should tear down"
                 if ! no_terminating_metadata; then
                     # Another check if the worker still didn't start
